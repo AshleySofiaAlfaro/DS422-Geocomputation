@@ -125,10 +125,6 @@ absolute_storm2_gap <- period_mean$storm2 - period_mean$gap
 percent_storm1 <- ((period_mean$storm1 - period_mean$baseline) / period_mean$baseline) * 100
 percent_storm2 <- ((period_mean$storm2 - period_mean$baseline) / period_mean$baseline) * 100
 percent_storm2_gap <- ((period_mean$storm2 - period_mean$gap) / period_mean$gap) * 100
-
-baseline_sd <- terra::app(r_masked$baseline, sd, na.rm = TRUE)
-z_score_storm1 <- (period_mean$storm1 - period_mean$baseline) / baseline_sd
-z_score_storm2 <- (period_mean$storm2 - period_mean$baseline) / baseline_sd
 ```
 
 ------------------------------------------------------------------------
@@ -136,7 +132,7 @@ z_score_storm2 <- (period_mean$storm2 - period_mean$baseline) / baseline_sd
 #### **Oahu Nighttime Lights -** First Kona Low and Second Kona Low
 
 ```{r, fig.width=6, fig.height=5}
-#| include: false
+#| echo: false
 
 ### Map: baseline period, before Kona low
 ggplot() +
@@ -149,7 +145,7 @@ ggplot() +
                        midpoint = 4.5,
                        na.value = "transparent") +
   
-  labs(title = "Oahu Nighttime Lights: Feb 24 - Mar 1, 2026",
+  labs(title = "Oahu Nighttime Lights: Mar 1 - Mar 7, 2026",
        subtitle = "Before First Kona Low Storm of 2026") +
   coord_sf() +
   theme_void() +
@@ -438,7 +434,7 @@ rainfall_files
 ```
 
 ```{r}
-#| include: false
+#| output: false
 
 storm_patterns <- list(
   storm1 = "2026_03_(10|11|12|13|14|15|16)",
