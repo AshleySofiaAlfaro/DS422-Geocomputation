@@ -1,0 +1,557 @@
+---
+title: "Oahu Nighttime Lights During Kona Low"
+author: Faith, Ashley, Elora & Amara
+format: html
+editor: visual
+---
+
+```{r}
+#| output: false
+
+library(blackmarbler)
+library(geodata)
+library(sf)
+library(terra)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(tidyterra)
+library(lubridate)
+```
+
+```{r}
+#| include: false
+
+bearer <- get_nasa_token(username = "[USERNAME]", 
+                         password = "[PASSWORD]")
+```
+
+```{r}
+#| include: false
+
+bearer <- "[INSERT TOKEN]"
+```
+
+### Research Question
+
+How did the first Kona Low storm and second Kona Low storm differ in their impact on power outages on Oahu?
+
+#### Sub Questions
+
+1.  Regionally, how did the impacts differ?
+2.  Did the outage patterns correlate with the storm's paths?
+
+### Background
+
+The first Kona low storm of 2026 hit Hawaii from **March 10 through March 16**, and the second Kona low storm arrived from **March 19 to March 24**. Kona lows are a type of subtropical storm system that tends to form during the winter and early spring months in Hawaii. Unlike a typical hurricane, they do not always bring one clean hit. Instead they can linger over the islands for several days, bringing bands of heavy rain, strong wind gusts, and even lightning as the system passes through.
+
+### Dates Analyzed
+
+We looked at **March 10 through March 16, 2026** and **March 19 to March 24**. We included **March 1 to March 7, 2026** as a pre-storm baseline, and **March 18** to gauge whether the effects from the first Kona low had lasting impacts that goes into the second Kona low storm.
+
+#### Region of Interest
+
+```{r}
+#| output: false
+
+### ROI
+hi_counties <- gadm(country = "USA", level = 2, path = tempdir()) |>
+  st_as_sf()
+
+# Filter to only Oahu
+roi_sf <- hi_counties |>
+  filter(NAME_1 == "Hawaii", NAME_2 == "Honolulu") |>
+  st_cast("POLYGON")
+
+roi_sf <- roi_sf[which.max(st_area(roi_sf)), ]
+```
+
+```{r}
+#| include: false
+
+# Quick check that the ROI looks right
+ggplot(roi_sf) + geom_sf()
+```
+
+#### Daily NTL Data
+
+```{r}
+period_dates <- list(
+  baseline = seq.Date(from = ymd("2026-03-01"), to = ymd("2026-03-07"), by = "day"),
+  gap      = ymd("2026-03-18"),
+  storm1   = seq.Date(from = ymd("2026-03-10"), to = ymd("2026-03-16"), by = "day"),
+  storm2   = seq.Date(from = ymd("2026-03-19"), to = ymd("2026-03-24"), by = "day")
+)
+```
+
+```{r}
+#| output: false
+
+### Daily NTL data: baseline, gap day, first Kona low, second Kona low
+
+r_list <- list()
+for (period in names(period_dates)) {
+  r_list[[period]] <- bm_raster(roi_sf = roi_sf,
+                                 product_id = "VNP46A2", # Daily corrected data
+                                 quality_flag_rm = 2,
+                                 date = period_dates[[period]],
+                                 bearer = bearer)
+}
+```
+
+```{r}
+### Mask to ROI + log transform, for every period
+
+r_masked <- list()
+for (period in names(r_list)) {
+  r <- r_list[[period]] |> terra::mask(vect(roi_sf))
+  r[] <- log(r[] + 1)
+  r_masked[[period]] <- r
+}
+```
+
+```{r}
+### Mean raster per period + change rasters
+
+period_mean <- list()
+for (period in names(r_masked)) {
+  period_mean[[period]] <- terra::mean(r_masked[[period]], na.rm = TRUE)
+}
+
+absolute_storm1 <- period_mean$storm1 - period_mean$baseline
+absolute_storm2 <- period_mean$storm2 - period_mean$baseline
+absolute_storm2_gap <- period_mean$storm2 - period_mean$gap
+
+percent_storm1 <- ((period_mean$storm1 - period_mean$baseline) / period_mean$baseline) * 100
+percent_storm2 <- ((period_mean$storm2 - period_mean$baseline) / period_mean$baseline) * 100
+percent_storm2_gap <- ((period_mean$storm2 - period_mean$gap) / period_mean$gap) * 100
+
+baseline_sd <- terra::app(r_masked$baseline, sd, na.rm = TRUE)
+z_score_storm1 <- (period_mean$storm1 - period_mean$baseline) / baseline_sd
+z_score_storm2 <- (period_mean$storm2 - period_mean$baseline) / baseline_sd
+```
+
+------------------------------------------------------------------------
+
+#### **Oahu Nighttime Lights -** First Kona Low and Second Kona Low
+
+```{r, fig.width=6, fig.height=5}
+#| include: false
+
+### Map: baseline period, before Kona low
+ggplot() +
+  
+  geom_spatraster(data = r_masked$baseline) +
+  facet_wrap(~lyr, ncol = 4) +
+  scale_fill_gradient2(low = "black",
+                       mid = "yellow",
+                       high = "red",
+                       midpoint = 4.5,
+                       na.value = "transparent") +
+  
+  labs(title = "Oahu Nighttime Lights: Feb 24 - Mar 1, 2026",
+       subtitle = "Before First Kona Low Storm of 2026") +
+  coord_sf() +
+  theme_void() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        strip.text = element_text(face = "bold"),
+        legend.position = "none")
+```
+
+**First Kona Low Storm:** There is missing satellite imagery for March 10, 11, and 12.
+
+```{r, fig.width=6, fig.height=5}
+#| echo: false
+
+### Map: one panel per day, March 10-16, 2026
+ggplot() +
+  
+  geom_spatraster(data = r_masked$storm1) +
+  facet_wrap(~lyr, ncol = 2) +
+  scale_fill_gradient2(low = "black",
+                       mid = "yellow",
+                       high = "red",
+                       midpoint = 4.5,
+                       na.value = "transparent") +
+  
+  labs(title = "Oahu Nighttime Lights: March 10-16, 2026",
+       subtitle = "First Kona Low Storm of 2026 \n(Missing Mar 10-12)") +
+  coord_sf() +
+  theme_void() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        strip.text = element_text(face = "bold"),
+        legend.position = "none")
+```
+
+**Second Kona Low Storm:** All satellite imagery was available for the second Kona low storm.
+
+```{r, fig.width=6, fig.width=6}
+#| echo: false
+
+### Map: one panel per day, March 19-24, 2026
+ggplot() +
+  
+  geom_spatraster(data = r_masked$storm2) +
+  facet_wrap(~lyr, ncol = 3) +
+  scale_fill_gradient2(low = "black",
+                       mid = "yellow",
+                       high = "red",
+                       midpoint = 4.5,
+                       na.value = "transparent") +
+  
+  labs(title = "Oahu Nighttime Lights: March 19-24, 2026",
+       subtitle = "Second Kona Low Storm of 2026") +
+  coord_sf() +
+  theme_void() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        strip.text = element_text(face = "bold"),
+        legend.position = "none")
+```
+
+------------------------------------------------------------------------
+
+#### **Daily Luminescence -** Baseline Period vs. Storm Period
+
+```{r}
+#| echo: false
+
+baseline_luminance <- terra::global(r_masked$baseline, "mean", na.rm = TRUE)[,1]
+storm1_luminance <- terra::global(r_masked$storm1, "mean", na.rm = TRUE)[,1]
+storm2_luminance <- terra::global(r_masked$storm2, "mean", na.rm = TRUE)[,1]
+
+daily_dates <- c(period_dates$baseline, ymd(c("2026-03-13", "2026-03-14", "2026-03-15", "2026-03-16", "2026-03-19", "2026-03-20", "2026-03-21", "2026-03-22", "2026-03-23", "2026-03-24")))
+daily_luminance <- c(baseline_luminance, storm1_luminance, storm2_luminance)
+
+df_storm1 <- data.frame(
+  Date = daily_dates,
+  Luminance = daily_luminance,
+  Period = c(rep("Baseline", length(period_dates$baseline)), rep("First Kona Low", 4), rep("Second Kona Low", 6))
+)
+
+ggplot(df_storm1, aes(x = Date, y = Luminance, fill = Period)) +
+  geom_col() +
+  scale_fill_manual(values = c("Baseline" = "gray70", "First Kona Low" = "steelblue", "Second Kona Low" = "maroon")) +
+  labs(
+    title = "Daily Overall Luminance: First Kona Low",
+    x = "Date",
+    y = "Mean Luminance",
+    fill = "Period"
+  ) +
+  theme_minimal()
+```
+
+**Takeaway:** There is no obvious decrease in overall nighttime luminescence during either Kona Low storm compared with the baseline period. Overall, nighttime luminescence appears relatively similar across the baseline and storm periods, with some storm days showing slightly higher luminescence than the baseline days.
+
+------------------------------------------------------------------------
+
+#### **Absolute Change -** First Kona Low vs. Second Kona Low
+
+How much raw light was lost at this exact spot?
+
+```{r, fig.width=6, fig.height=4}
+#| echo: false
+
+ggplot() +
+  geom_spatraster(data = absolute_storm1) +
+  geom_spatvector(data = roi_sf, fill = NA, color = "black", linewidth = 0.2) +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "transparent"
+  ) +
+  labs(
+    title = "Absolute Change in Nighttime Lights",
+    subtitle = "First Kona Low Storm vs. Baseline Period",
+    fill = "NTL Change"
+  ) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+```{r, fig.width=6, fig.height=4}
+#| echo: false
+
+ggplot() +
+  geom_spatraster(data = absolute_storm2) +
+  geom_spatvector(data = roi_sf, fill = NA, color = "black", linewidth = 0.2) +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "transparent"
+  ) +
+  labs(
+    title = "Absolute Change in Nighttime Lights",
+    subtitle = "Second Kona Low Storm vs. Baseline Period",
+    fill = "NTL Change"
+  ) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+```{r, fig.width=6, fig.height=4}
+#| echo: false
+
+ggplot() +
+  geom_spatraster(data = absolute_storm2_gap) +
+  geom_spatvector(data = roi_sf, fill = NA, color = "black", linewidth = 0.2) +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "transparent"
+  ) +
+  labs(
+    title = "Absolute Change in Nighttime Lights",
+    subtitle = "Second Kona Low Storm vs. Gap Day",
+    fill = "NTL Change"
+  ) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+**First Kona Low Storm:** The absolute change map shows areas of increased nighttime luminescence, particularly across parts of southern Oʻahu, while decreases in nighttime luminescence are more noticeable across parts of the North Shore. Decreases are also visible in portions of Honolulu and the Windward side. Since the range is relatively small (−0.5 to 0.5), the overall changes in nighttime luminescence appear relatively modest.
+
+**Second Kona Low Storm:** Compared with the first Kona Low, there are fewer noticeable areas of increased nighttime luminescence across Oʻahu. Decreases in nighttime luminescence are again visible in some of the same areas observed during the first storm, with additional decreases appearing on parts of the Leeward side. The larger range (−2 to 1) also indicates that the magnitude of the observed changes was greater during the second storm than during the first.
+
+------------------------------------------------------------------------
+
+#### **Percent Change -** First Kona Low vs. Second Kona Low
+
+What share of this pixel's normal light was lost?
+
+```{r, fig.width=6, fig.height=4}
+#| echo: false
+
+ggplot() +
+  geom_spatraster(data = percent_storm1) +
+  geom_spatvector(data = roi_sf, fill = NA, color = "black", linewidth = 0.2) +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "transparent"
+  ) +
+  labs(
+    title = "Percent Change in Nighttime Lights",
+    subtitle = "First Kona Low Storm vs. Baseline Period",
+    fill = "Percent Change"
+  ) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+```{r, fig.width=6, fig.height=4}
+#| echo: false
+
+ggplot() +
+  geom_spatraster(data = percent_storm2) +
+  geom_spatvector(data = roi_sf, fill = NA, color = "black", linewidth = 0.2) +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "transparent"
+  ) +
+  labs(
+    title = "Percent Change in Nighttime Lights",
+    subtitle = "Second Kona Low Storm vs. Baseline Period",
+    fill = "Percent Change"
+  ) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+```{r, fig.width=6, fig.height=4}
+#| echo: false
+
+ggplot() +
+  geom_spatraster(data = percent_storm2_gap) +
+  geom_spatvector(data = roi_sf, fill = NA, color = "black", linewidth = 0.2) +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "transparent"
+  ) +
+  labs(
+    title = "Percent Change in Nighttime Lights",
+    subtitle = "Second Kona Low Storm vs. Gap Day",
+    fill = "Percent Change"
+  ) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+**First Kona Low Storm:** During the first Kona Low, the North Shore shows some of the largest decreases in nighttime luminescence relative to the baseline period. Decreases are also visible in portions of Honolulu and the Windward side, while increases are scattered across other parts of Oʻahu, particularly on the eastern side.
+
+**Second Kona Low Storm:** The percent-change map shows relatively few areas with negative nighttime-luminescence changes compared with the first Kona Low. Instead, many areas show positive percentage changes, including portions of the North Shore and western side.
+
+------------------------------------------------------------------------
+
+### HCDP: Rainfall Data
+
+Using daily rainfall GeoTIFFs from the Hawaii Climate Data Portal to see the average rainfall during the first Kona low and the second Kona low.
+
+```{r}
+rainfall_files <- list.files(
+  "data/03",
+  pattern = "\\.tif$",
+  full.names = TRUE
+)
+
+rainfall_files
+```
+
+```{r}
+#| include: false
+
+storm_patterns <- list(
+  storm1 = "2026_03_(10|11|12|13|14|15|16)",
+  storm2 = "2026_03_(19|20|21|22|23|24)"
+)
+
+rain_rast <- list()
+rain_avg <- list()
+for (storm in names(storm_patterns)) {
+  storm_files <- rainfall_files[grepl(storm_patterns[[storm]], rainfall_files)]
+  rain_rast[[storm]] <- rast(storm_files)
+  rain_avg[[storm]] <- terra::mean(rain_rast[[storm]], na.rm = TRUE)
+}
+```
+
+```{r, fig.width=6, fig.height=4}
+#| echo: false
+
+ggplot() +
+  geom_spatraster(data = rain_avg$storm1) +
+  geom_sf(
+    data = roi_sf,
+    fill = NA,
+    color = "black"
+  ) +
+  scale_fill_viridis_c(
+    na.value = "transparent"
+  ) +
+  labs(
+    title = "Average Daily Rainfall — First Kona Low",
+    subtitle = "March 10–16, 2026",
+    fill = "Rainfall (mm/day)"
+  ) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+```{r, fig.width=6, fig.height=4}
+#| echo: false
+
+ggplot() +
+  geom_spatraster(data = rain_avg$storm2) +
+  geom_sf(
+    data = roi_sf,
+    fill = NA,
+    color = "black"
+  ) +
+  scale_fill_viridis_c(
+    na.value = "transparent"
+  ) +
+  labs(
+    title = "Average Daily Rainfall — Second Kona Low",
+    subtitle = "March 19–24, 2026",
+    fill = "Rainfall (mm/day)"
+  ) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+### Rainfall vs. NTL Luminescence
+
+Resamples the rainfall raster onto the NTL raster's grid (different resolutions, so pixels don't line up until resampled), then pairs each pixel's rainfall value with its luminescence value, per storm. Computes correlation and plots luminescence vs. rainfall as a scatter
+
+```{r}
+#| include: false
+
+rain_ntl_df <- list()
+for (storm in c("storm1", "storm2")) {
+  rain_resampled <- resample(rain_avg[[storm]], period_mean[[storm]], method = "bilinear")
+  
+  vals <- data.frame(
+    Rainfall = values(rain_resampled)[,1],
+    Luminance = values(period_mean[[storm]])[,1]
+  )
+  vals <- na.omit(vals)
+  vals$Storm <- storm
+  
+  rain_ntl_df[[storm]] <- vals
+}
+
+rain_ntl_combined <- rbind(rain_ntl_df$storm1, rain_ntl_df$storm2)
+```
+
+```{r}
+cor(rain_ntl_df$storm1$Rainfall, rain_ntl_df$storm1$Luminance)
+cor(rain_ntl_df$storm2$Rainfall, rain_ntl_df$storm2$Luminance)
+```
+
+```{r, fig.width=8, fig.height=5}
+#| echo: false
+
+ggplot(rain_ntl_combined, aes(x = Luminance, y = Rainfall)) +
+  geom_point(alpha = 0.4, color = "steelblue") +
+  geom_smooth(method = "lm", color = "black", se = FALSE) +
+  facet_wrap(~Storm, labeller = as_labeller(c(storm1 = "First Kona Low", storm2 = "Second Kona Low"))) +
+  labs(
+    title = "Rainfall vs. Nighttime Light Luminance",
+    x = "Log NTL Luminance",
+    y = "Rainfall (mm/day)"
+  ) +
+  theme_minimal()
+```
+
+### Limitations
+
+- Satellite imagery is unavailable for March 10–12, so the first Kona low can only be compared against March 13–16 rather than the full storm window.
+- The second Kona low is compared against a single gap day (March 18) rather than the 7-day baseline average used for the first storm, making that comparison inherently noisier and more vulnerable to day-specific artifacts (cloud cover, sensor noise) than a multi-day average would be.
+- Each storm period is represented by a single mean raster (averaged across all valid days in that window), which can mask day-to-day variability, i.e., one especially dark night could be diluted by comparatively brighter nights in the same average.
