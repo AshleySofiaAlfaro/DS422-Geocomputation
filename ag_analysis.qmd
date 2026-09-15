@@ -1,0 +1,72 @@
+---
+title: "Agricultural Land Use Analysis"
+author: Ashley Alfaro
+format: html
+editor: visual
+---
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(sf)
+library(here)
+library(mapview)
+library(RColorBrewer)
+```
+
+### Read in Data
+
+GeoJSON files of the state of Hawaii's agricultural land use in 2015 and 2020.
+
+```{r}
+ag_2015 <- st_read(here("data/Agricultural_Land_Use_2015_Baseline.geojson"))
+ag_2020 <- st_read(here("data/Agricultural_Land_Use_2020_Update.geojson"))
+```
+
+```{r}
+unique(ag_2015$cropcatego) # 15 categories total
+```
+
+```{r}
+cropcatego_colors <- colorRampPalette(brewer.pal(12, "Set3"))(15)
+```
+
+### Make a Map
+
+```{r}
+mapview(ag_2015, zcol = "cropcatego") # , col.regions()
+```
+
+```{r}
+mapview(ag_2020, zcol = "crops_2020")
+```
+
+### Distribution of Acreage
+
+Note: `scales = "free_y"` is used so that every graph plotted has their own unique y-axis range.
+
+```{r}
+ggplot(ag_2015, aes(x = acreage)) +
+  geom_histogram() +
+  theme_bw() +
+  facet_wrap(~island, scales = "free_y") 
+  #xlim(0, 1000)
+```
+
+**Question 1:** Did we add / lose agricultural land acreage between 2015 and 2020?
+
+```{r}
+sum_2015_acreage <- sum(ag_2015$acreage) 
+sum_2020_acreage <- sum(ag_2020$acreage)
+
+sum_2020_acreage - sum_2015_acreage
+```
+
+**Question 2:** What has that land been converted to?
+
+Analysis Ideas:
+
+- One map of lost agricultural land between 2015 and 2020
+- Agricultural land ownership
+- Normalized Difference Vegitation Index (NDVI) in lost agricultural land
+- Soil types
