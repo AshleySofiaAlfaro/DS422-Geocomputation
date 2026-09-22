@@ -1,0 +1,54 @@
+---
+title: "Oahu Solar"
+author: "Ashley Alfaro"
+format: html
+editor: visual
+---
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(mapview)
+library(here)
+```
+
+## Read in Data
+
+```{r}
+oahu_solar <- st_read(here("data/oahu_solar_dedup_simple.geojson"))
+```
+
+## Map the Solar Data
+
+```{r}
+mapview(oahu_solar)
+```
+
+## Retrieve Census Data
+
+```{r}
+oahu_median_household_income <- get_acs( # acs - american community survey
+  geography = "tract",
+  variables = "B19013_001",
+  state = "HI",
+  county = "Honolulu",
+  geometry = TRUE,
+  year = 2022
+)
+```
+
+```{r}
+mapview(oahu_median_household_income, zcol = "moe")
+```
+
+```{r}
+ggplot(oahu_median_household_income, aes(x = estimate, y = moe)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_bw()
+```
+
+Oahu solar has over 88,000 detection polygons, while the Oahu median household has 330 polygons on a tract level. We have to find a way to convert the detection polygons into the 330 tract polygons, so that we could combine the datasets together.
