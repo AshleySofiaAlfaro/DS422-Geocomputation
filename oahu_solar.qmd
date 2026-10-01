@@ -5,6 +5,10 @@ format: html
 editor: visual
 ---
 
+The goal is to answer: "Is there a relationship/correlation between median income and solar infrastructure at the census tract level?"
+
+[Read Methodology and Findings](#report-id)
+
 ## Libraries
 
 ```{r}
@@ -13,6 +17,8 @@ library(tidycensus)
 library(sf)
 library(mapview)
 library(here)
+library(viridisLite)
+library(leafsync)     # used for side-by-side map comparisons
 ```
 
 ## Read in Data
@@ -23,11 +29,13 @@ oahu_solar <- st_read(here("data/oahu_solar_dedup_simple.geojson"))
 
 ## Map the Solar Data
 
-```{r}
+```{r, eval = FALSE}
 mapview(oahu_solar)
 ```
 
-## Retrieve Census Data
+The detected solar polygons are fairly accurate in identifying solar farms and solar panels on residential homes and commercial buildings. However, it doesn't capture every single solar panel when compared to the satellite imagery basemap.
+
+## Retrieve Median Household Income Data
 
 ```{r}
 oahu_median_household_income <- get_acs( # acs - american community survey
@@ -41,7 +49,7 @@ oahu_median_household_income <- get_acs( # acs - american community survey
 ```
 
 ```{r}
-mapview(oahu_median_household_income, zcol = "moe")
+mapview(oahu_median_household_income, zcol = "estimate")
 ```
 
 ```{r}
@@ -51,4 +59,379 @@ ggplot(oahu_median_household_income, aes(x = estimate, y = moe)) +
   theme_bw()
 ```
 
-Oahu solar has over 88,000 detection polygons, while the Oahu median household has 330 polygons on a tract level. We have to find a way to convert the detection polygons into the 330 tract polygons, so that we could combine the datasets together.
+Oahu solar has over 88,000 detection polygons, while the Oahu median household has 330 polygons on a tract level. We have to find a way to convert the detection polygons into the 330 tract polygons, so that we could combine the data sets together. In other words, how many of these detection polygons are within a specific tract polygon?
+
+- Package is sf, language is R
+- Data output description and head() for both data sets (Oahu solar; Oahu median household income)
+  - Median income data came from tidycensus package
+- Identify best function(s) from sf
+- Goal is to answer the question: "Is there a relationship/correlation between median income and solar infrastructure at the census tract level?"
+- One census tract example
+
+## Combine Tract Polygons and Solar Polygons
+
+```{r}
+target_crs <- 26904  # NAD83 / UTM zone 4N, units in meters
+
+oahu_solar <- oahu_solar |>
+  filter(!st_is_empty(geometry)) |>  # drop the 68 empty geometries
+  st_make_valid() |>                 # repair any invalid polygons
+  st_transform(target_crs)           # reproject to meters
+
+oahu_tracts <- oahu_median_household_income |>
+  st_make_valid() |>
+  st_transform(target_crs)
+
+# sanity checks
+st_crs(oahu_solar) == st_crs(oahu_tracts)  # should be TRUE
+nrow(oahu_solar)                           # should be 88663 - 68 = 88595
+```
+
+```{r}
+solar_points <- oahu_solar |>
+  st_point_on_surface()
+
+solar_points <- solar_points |>
+  st_join(oahu_tracts, join = st_within)  # each point matched to its containing tract
+
+solar_by_tract_join <- solar_points |>
+  st_drop_geometry() |>
+  filter(!is.na(GEOID)) |>              # drop points that fell outside all tracts (e.g. offshore)
+  group_by(GEOID) |>
+  summarise(solar_area_m2 = sum(area_m2), .groups = "drop")  # original area_m2 is fine here
+
+nrow(solar_by_tract_join)
+sum(solar_by_tract_join$solar_area_m2)
+```
+
+## Identify Solar Farms
+
+To identify and remove large commercial solar farms, I merged the nearby detection polygons into clusters by buffering each polygon by 10 meters and unioning overlapping buffers, so that detections within about 20 meters of each other were treated as one installation.
+
+```{r}
+# buffer_dist = 10 meters
+# for "how far apart can two detections be and still be one installation")
+
+# merge nearby polygons into cluster shapes
+solar_clusters <- oahu_solar |>
+  st_buffer(10) |>
+  st_union() |>
+  st_cast("POLYGON") |>
+  st_sf() |>
+  mutate(cluster_id = row_number())
+
+# assign each original polygon to a cluster
+solar_with_cluster <- oahu_solar |>
+  st_point_on_surface() |>
+  st_join(solar_clusters) |>
+  st_drop_geometry() |>
+  select(detection_id, cluster_id)
+
+oahu_solar_clustered <- oahu_solar |>
+  left_join(solar_with_cluster, by = "detection_id")
+```
+
+The `cluster_summary` calculates each cluster's total area and polygon count.
+
+```{r}
+cluster_summary <- oahu_solar_clustered |>
+  st_drop_geometry() |>
+  group_by(cluster_id) |>
+  summarise(
+    n_polygons    = n(),
+    total_area_m2 = sum(area_m2),
+    mean_area_m2  = mean(area_m2),
+    .groups = "drop"
+  ) |>
+  arrange(desc(total_area_m2))
+
+head(cluster_summary, 20)
+```
+
+```{r}
+top_clusters <- cluster_summary |>
+  slice_max(total_area_m2, n = 25) |>
+  pull(cluster_id)
+
+oahu_solar_clustered |>
+  filter(cluster_id %in% top_clusters) |>
+  mapview()
+```
+
+Solar farms and commercial solar are not always one big polygon. While some polygons are connected and identified by the same GEOID, a lot of the detection polygons tend to be clustered together and have its own GEOIDs.
+
+```{r}
+oahu_solar_residential <- oahu_solar_clustered |>
+  filter(!(cluster_id %in% top_clusters)) |> 
+  select(-cluster_id)
+
+nrow(oahu_solar)              # before
+nrow(oahu_solar_residential)  # after dropping confirmed solar farms
+```
+
+```{r}
+solar_points_residential <- oahu_solar_residential |>
+  st_point_on_surface()
+
+solar_by_tract_residential <- solar_points_residential |>
+  st_join(oahu_tracts, join = st_within) |>
+  st_drop_geometry() |>
+  filter(!is.na(GEOID)) |>
+  group_by(GEOID) |>
+  summarise(solar_area_m2 = sum(area_m2), .groups = "drop")
+
+nrow(solar_by_tract_residential)
+sum(solar_by_tract_residential$solar_area_m2)
+```
+
+## Correlation Between Solar Infrastructure and Median Household Income
+
+```{r}
+oahu_tracts_solar <- oahu_tracts |>
+  left_join(solar_by_tract_residential, by = "GEOID") |>
+  mutate(solar_area_m2 = replace_na(solar_area_m2, 0))  # tracts with no residential solar detected
+```
+
+### Percent of Tract Covered by Solar
+
+To normalize the solar area, I decided to take into account the total area for each tract polygon. So, instead of only comparing the raw solar area to the median household income, I will also look at the percentage of tract that is covered by solar.
+
+```{r}
+oahu_analysis <- oahu_tracts_solar |>
+  mutate(
+    tract_area_m2 = as.numeric(st_area(geometry)),      # tract's own land area
+    solar_pct_cover = (solar_area_m2 / tract_area_m2) * 100  # % of tract covered by solar
+  ) |>
+  rename(median_income = estimate) |>
+  filter(!is.na(median_income))  # drop tracts with missing ACS income
+```
+
+### Median Income vs. Raw Solar Area (m2)
+
+```{r}
+cor.test(oahu_analysis$median_income, oahu_analysis$solar_area_m2)
+```
+
+```{r}
+ggplot(oahu_analysis, aes(x = median_income, y = solar_area_m2)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
+  labs(
+    x = "Median household income ($)",
+    y = "Solar infrastructure (m2)",
+    title = "Median income vs. solar area coverage, Oahu census tracts"
+  ) +
+  theme_bw()
+```
+
+### Median Income vs. Solar Coverage Percentage
+
+```{r}
+cor.test(oahu_analysis$median_income, oahu_analysis$solar_pct_cover)
+```
+
+```{r}
+ggplot(oahu_analysis, aes(x = median_income, y = solar_pct_cover)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
+  labs(
+    x = "Median household income ($)",
+    y = "Solar coverage (% of tract land area)",
+    title = "Median income vs. solar percentage coverage, Oahu census tracts"
+  ) +
+  theme_bw()
+```
+
+### Side-by-Side Maps
+
+Claude recommended a package called `leafsync` that allows side-by-side map comparisons, which I thought would be useful to visually see if there is a relationship or correlation between the number of detected solar panels and reported higher median household incomes.
+
+```{r}
+map_income <- mapview(oahu_analysis, zcol = "median_income")
+map_solar_pct <- mapview(oahu_analysis, zcol = "solar_pct_cover")
+map_solar_m2 <- mapview(oahu_analysis, zcol = "solar_area_m2") 
+```
+
+```{r}
+sync(map_income, map_solar_m2)
+```
+
+```{r}
+sync(map_income, map_solar_pct)
+```
+
+## Additional Normalization Methods
+
+While my main analysis normalized the raw solar area by the size of its tract, I thought it would be interesting to account for other attributes and see if it will change the relationship/correlation between solar infrastructure and median household income.
+
+## Retrieve Housing Units Data
+
+I wanted to look at housing units to see if areas with more detected solar is due to there being more housing within that specific tract. In other words, does the total solar area per tract have less to do with people being unable to afford it and more with the amount of existing buildings? The ACS variable for total housing units (occupied or vacant) is `B25002_001`.
+
+```{r}
+oahu_housing_units <- get_acs( # acs - american community survey
+  geography = "tract",
+  variables = "B25002_001",
+  state = "HI",
+  county = "Honolulu",
+  geometry = TRUE,
+  year = 2022
+)
+```
+
+```{r}
+mapview(oahu_housing_units, zcol="estimate")
+```
+
+```{r}
+oahu_housing_units <- oahu_housing_units |> 
+  st_drop_geometry() |> 
+  select(GEOID, housing = estimate)
+
+oahu_analysis <- oahu_analysis |> 
+  left_join(oahu_housing_units, by = 'GEOID')
+```
+
+### Housing Units vs. Raw Solar Area
+
+```{r}
+cor.test(oahu_analysis$housing, oahu_analysis$solar_area_m2)
+```
+
+```{r}
+ggplot(oahu_analysis, aes(x = housing, y = solar_area_m2)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
+  labs(
+    x = "Estimated Housing Units",
+    y = "Raw solar coverage (m2)",
+    title = "Estimated Housing Units vs. solar coverage area, Oahu census tracts"
+  ) +
+  theme_bw()
+```
+
+### Median Income vs. Solar Area Per Housing Unit
+
+```{r}
+oahu_analysis <- oahu_analysis |>
+  filter(housing > 0) |>           # avoid divide-by-zero
+  mutate(solar_m2_per_unit = solar_area_m2 / housing)
+```
+
+```{r}
+mapview(oahu_analysis, zcol = "solar_m2_per_unit")
+```
+
+```{r}
+cor.test(oahu_analysis$median_income, oahu_analysis$solar_m2_per_unit)
+```
+
+```{r}
+ggplot(oahu_analysis, aes(x = median_income, y = solar_m2_per_unit)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
+  labs(
+    x = "Median household income ($)",
+    y = "Solar area per housing unit (m²)",
+    title = "Median income vs. solar area per housing unit"
+  ) +
+  theme_bw()
+```
+
+## Retrieve Population Data
+
+I also wanted to look at the population at tract level. This is to rule out the assumption: do areas with higher populations have more detected solar infrastructure? It is important to note that multiple people can live in a single household, which will not be represented in the data. The ACS variable for total population is `B01003_001`.
+
+```{r}
+oahu_pop <- get_acs( # acs - american community survey
+  geography = "tract",
+  variables = "B01003_001",
+  state = "HI",
+  county = "Honolulu",
+  geometry = TRUE,
+  year = 2022
+)
+```
+
+```{r}
+oahu_pop <- oahu_pop |> 
+  st_drop_geometry() |> 
+  select(GEOID, population = estimate)
+
+oahu_analysis <- oahu_analysis |> 
+  left_join(oahu_pop, by = 'GEOID')
+```
+
+### Population vs. Raw Solar Area
+
+```{r}
+cor.test(oahu_analysis$population, oahu_analysis$solar_area_m2)
+```
+
+```{r}
+ggplot(oahu_analysis, aes(x = population, y = solar_area_m2)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
+  labs(
+    x = "Estimated Population",
+    y = "Raw solar coverage (m2)",
+    title = "Population vs. solar coverage area, Oahu census tracts"
+  ) +
+  theme_bw()
+```
+
+### Median Income vs. Solar Area Per Capita
+
+```{r}
+oahu_analysis <- oahu_analysis |>
+  filter(population > 0) |>        # avoid divide-by-zero
+  mutate(solar_m2_per_capita = solar_area_m2 / population)
+```
+
+```{r}
+mapview(oahu_analysis, zcol = "solar_m2_per_capita")
+```
+
+```{r}
+cor.test(oahu_analysis$median_, oahu_analysis$solar_m2_per_capita)
+```
+
+```{r}
+ggplot(oahu_analysis, aes(x = median_income, y = solar_m2_per_capita)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
+  labs(
+    x = "Median household income ($)",
+    y = "Solar area per capita (m2)",
+    title = "Median income vs. residential solar area per capita"
+  ) +
+  theme_bw()
+```
+
+------------------------------------------------------------------------
+
+## Census Tract Analysis on Household Median Income and Solar Infrastructure on Oahu {#report-id}
+
+#### Methods
+
+Two main datasets were used for this analysis. The first is an Oahu solar detection GeoJSON file, generated from satellite imagery, with each polygon representing a detected solar panel. The second is median household income at the census tract level, pulled from the 2018-2022 ACS using the `tidycensus` package.
+
+Before I combined the datasets, the solar data needed to be cleaned. With the help of Claude, 68 empty geometries were dropped, and all polygons were repaired using `st_make_valid()` and reprojected to a meters-based CRS so that are calculations would be accurate. Then, a spatial join using `st_point_on_surface()` and `st_join()` matched each solar detection polygon to its containing census tract polygon.
+
+The next step was to identify and remove large commercial solar infrastructure from the residential analysis. Looking at the polygon size alone wasn't a reliable way to those polygons, since solar farms are rarely captured as one large, single polygon. To account for this, nearby polygons were merged into clusters using a 10-meter buffer, and clusters were ranked by total area. The 25 largest clusters, confirmed through manual inspection against the satellite imagery basemap, were dropped from the dataset before the income comparison, since the solar farms could skew the findings and not accurately represent residential adoption of solar infrastructure.
+
+I used multiple normalization methods for this analysis. I assumed raw solar area at the tract level would be heavily influenced by tract size and population, so different normalized versions of the solar variable were tested: percent of tract land area covered by solar, solar area per housing unit, and solar area per capita. In order to do this, I pulled total population and total housing units at census tract level from the 2018-2022 ACS. Correlation coefficients and p-values were calculated for each version.
+
+#### Findings
+
+Raw solar area showed a small but statistically significant positive correlation with median household income (r=0.247, p\<0.001). In other words, census tracts with higher median household incomes tended to have more total detected solar area. However, raw solar area also had stronger correlations with population (r=0.550, p\<0.001) and housing units (r=0.280, p\<0.001). This suggests that the amount of solar in a tract is strongly related to how many people and housing units are present, which is important when interpreting the relationship between income and total solar area.
+
+When solar area was normalized by housing units, the relationship with income dropped to a small and statistically insignificant correlation (r=0.060, p=0.293). The same pattern was found for solar area per capita (r=0.062, p=0.273) and percent of tract land covered by solar (r=-0.002, p=0.975). Therefore, although income was associated with total solar area, no statistically significant relationship was found between income and normalized measures of solar infrastructure.
+
+#### Discussion
+
+The results appear to point to raw solar area (m2) behaving more like a measure of tract size than a measure of solar adoption. A tract with more people and more housing units will naturally have more buildings and rooftops where solar could be installed. This may help explain why population and housing units had stronger correlations with total solar area than median income did.
+
+That said, my analysis did not find strong evidence of a relationship between median household income and residential solar infrastructure at the census level on Oahu.
+
+However, it is important to note that the ACS median household income, population, and housing unit estimates have their own margins of errors, which adds some uncertainty to the comparisons.
