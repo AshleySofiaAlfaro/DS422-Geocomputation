@@ -15,6 +15,8 @@ library(mapboxapi)
 library(leaflet)
 library(mapview)
 library(here)
+library(tidyverse)
+library(mapgl)
 library(sf)
 ```
 
@@ -75,7 +77,7 @@ nike_map %>%
 chaminade_isos <- mb_isochrone(
   location = "3140 Waialae Ave, Honolulu, HI 96816",
   profile = "driving",
-  time = 1:30
+  time = 1:20
 )
 ```
 
@@ -107,7 +109,7 @@ chamiande_icon <- makeIcon(
   iconHeight = 25
 )
 
-chamiande <- mb_geocode("3140 Waialae Ave, Honolulu, HI 96816")
+chamiande <- mb_geocode("677 ALA MOANA, Honolulu / Downtown, HI 9681")
 
 chaminade_map |> 
   addMarkers(lng = chamiande[1], lat = chamiande[2], icon = chamiande_icon)
@@ -134,6 +136,8 @@ Question: Can we make an accessibility surfaces map for trauma centers, ER's, ho
 - Hospitals, trauma centers, etc.
 - Police stations
 
+## Evacuation Zones
+
 ### Read in Tsunami Zones Data
 
 ```{r}
@@ -144,13 +148,167 @@ extreme_tsunami_zones <- st_read(here("data/Extreme_Tsunami_Evacuation_Zones.geo
 ### Filter Polygons to Oahu
 
 ```{r}
-oahu_tsunami_zones <- tsunami_zones |> 
+oahu_tsunami_zones <- tsunami_zones |>
   filter(island == "OAHU")
 
-oahu_extreme_tsunami_zones <- extreme_tsunami_zones |> 
+oahu_extreme_tsunami_zones <- extreme_tsunami_zones |>
   filter(island == "OAHU")
+
+mapview(oahu_tsunami_zones)
+```
+
+### Dissolve Each Layer Into One Polygon
+
+There are two zones in the event of a tsunami: regular (red) and extreme (yellow). Most tsunami warnings have those in the red zones evacuate. For an extreme tsunami, those in the red zone and yellow zone need to evacuate. To make things easier, we will dissolve each layer into one polygon for the extreme scenario.
+
+```{r}
+regular_zone <- oahu_tsunami_zones |>
+  st_make_valid() |>
+  st_union() |>
+  st_transform(4326)
+
+extreme_zone <- oahu_extreme_tsunami_zones |>
+  st_make_valid() |>
+  st_union() |>
+  st_transform(4326) |>
+  st_union(regular_zone)
 ```
 
 ```{r}
-mapview(oahu_tsunami_zones)
+mapview(extreme_zone)
 ```
+
+## Address Points
+
+- [Address Points \| City & County of Honolulu](https://honolulu-cchnl.opendata.arcgis.com/datasets/address-points-1/explore?location=21.251058%2C-158.165637%2C10&showTable=true)
+- The address point layer was created to allow the city to specify which structure (or structures) on a lot has been assigned a given address (or addresses).
+
+```{r}
+oahu_address_points <- st_read(here("data/oahu_addresses_2020.geojson")) |>
+  select(objectid, address_id, streetname, geocodeadd, city, zip, globalid, geometry)
+```
+
+### Flag Which Zone Each Address Falls In
+
+We initially thought it would be best to filter it down to addresses within the tsunami zones. However, we decided to keep all addresses. That way the app can tell someone "you are not in the tsunami zone" instead of just not finding their address.
+
+```{r}
+all_addresses <- oahu_address_points |>
+  st_transform(4326) |>
+  mutate(
+    in_regular = lengths(st_intersects(geometry, regular_zone)) > 0,
+    in_extreme = lengths(st_intersects(geometry, extreme_zone)) > 0,
+    label = str_squish(paste0(geocodeadd, ", ", city, ", HI ", zip)),
+    lng = st_coordinates(geometry)[, 1],
+    lat = st_coordinates(geometry)[, 2]
+  ) |>
+  st_drop_geometry() |>
+  select(address_id, label, lng, lat, in_regular, in_extreme)
+
+count(all_addresses, in_regular, in_extreme)
+```
+
+```{r}
+# check for duplicate address ids
+all_addresses |> count(address_id) |> filter(n > 1)
+sum(duplicated(all_addresses))
+
+# same label AND same coordinates 
+sum(duplicated(all_addresses[c("label", "lng", "lat")]))
+```
+
+```{r}
+# Drop exact duplicate points
+all_addresses <- all_addresses |>
+  distinct(address_id, .keep_all = TRUE) |>
+  distinct(label, lng, lat, .keep_all = TRUE)
+```
+
+## Example Isochrone Maps
+
+### Select an Address
+
+```{r}
+# search: returns candidate matches
+find_address <- function(query, n = 20) {
+  all_addresses |>
+    filter(str_detect(label, fixed(query, ignore_case = TRUE))) |>
+    select(address_id, label, in_regular, in_extreme) |>
+    head(n)
+}
+
+# select: address_id -> c(lng, lat)
+get_start <- function(id) {
+  all_addresses |>
+    filter(address_id == id) |>
+    select(lng, lat) |>
+    unlist() |>
+    unname()
+}
+```
+
+```{r}
+find_address("waikiki")
+```
+
+### Single Time Map
+
+```{r}
+start <- get_start(2436)
+
+iso_1445 <- mb_isochrone(
+  location  = start,
+  profile   = "walking",
+  time      = c(5, 10, 15),
+  depart_at = "2025-07-29T14:45"
+) |>
+  arrange(desc(time))   # largest first so smaller contours draw on top
+
+mapview(regular_zone, color = "red", alpha.regions = 0, lwd = 2) +
+  mapview(iso_1445, zcol = "time", layer.name = "Drive time (min)",
+          alpha.regions = 0.4)
+```
+
+### Comparison Map (2:45 PM vs. 4:45 PM)
+
+Swap `regular_zone` for `extreme_zone` in `zone` to view the extreme scenario.
+
+```{r}
+times <- c(5, 10, 15)
+colors <- c("#d73027", "#fc8d59", "#4575b4")
+
+get_iso <- function(start, depart_at) {
+  mb_isochrone(start, profile = "driving-traffic", time = times, depart_at = depart_at) |>
+    arrange(desc(time))
+}
+
+iso_1445 <- get_iso(start, "2025-07-29T14:45")
+iso_1645 <- get_iso(start, "2025-07-29T16:45")
+
+zone <- st_sf(geometry = regular_zone)   # or extreme_zone
+start_pt <- st_sf(geometry = st_sfc(st_point(start), crs = 4326))
+
+make_map <- function(iso) {
+  mapboxgl(style = mapbox_style("light"), center = start, zoom = 11) |>
+    add_fill_layer(id = "iso", source = iso,
+                   fill_color = match_expr("time", values = times, stops = colors),
+                   fill_opacity = 0.5) |>
+    add_fill_layer(id = "zone", source = zone, fill_color = "black", fill_opacity = 0.3) |>
+    add_circle_layer(id = "start", source = start_pt, circle_color = "black", circle_radius = 5)
+}
+
+compare(make_map(iso_1445), make_map(iso_1645), swiper_color = "green") |>
+  add_legend(
+    "Drive time (2:45 pm vs. 4:45 pm)",
+    values = paste(times, "minutes"),
+    colors = colors,
+    type = "categorical",
+    style = legend_style(background_opacity = 0.8)
+  )
+```
+
+## Limitations of `depart_at`
+
+I have read articles claiming it took people over an hour to leave their parking structures from their downtown offices, and how some places had three hours of traffic gridlock ([Hawaii Plans Improvements to Tsunami Response Protocol](https://www.govtech.com/em/preparedness/hawaii-plans-improvements-to-tsunami-response-protocol)). I also have secondhand anecdotes of it taking my dad an hour to get from Ewa Gentry to Waipahu. This confused me because the map shows that someone who lives near the coast in Ewa Beach can get to Waipahu in 15 minutes.
+
+I looked into `depart_at` more and realized it does **not** reflect the actual traffic on July 29, 2025. It shows what traffic on a Tuesday at the specified time typically looks like, so it doesn't capture the gridlock that happened when the statewide tsunami warning was announced. This makes me wonder if it would be better not to use `depart_at` and have it pull traffic data from the date and time it is ran instead.
