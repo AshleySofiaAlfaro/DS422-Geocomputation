@@ -32,7 +32,7 @@ List each dataset and where it comes from (agency, website, link). Note the form
 - [HonoluluGIS](https://honolulu-cchnl.opendata.arcgis.com/datasets/hospitals-and-clinics/explore?location=21.474750,-157.942850,10): Locations of hospitals and clinics. This could be downloaded as a GeoJSON file.
 - [HonoluluGIS](https://honolulu-cchnl.opendata.arcgis.com/datasets/bus-routes/explore?location=21.381248%2C-157.925971%2C11): Bus Routes for the City and County of Honolulu
 - American Community Survey Data (can be accessed via tidycensus)
- 
+- US Census Tracts
  
  
 ---
@@ -42,9 +42,7 @@ List each dataset and where it comes from (agency, website, link). Note the form
 What methods will you actually run? For example, image segmentation, spatial statistics, time series analysis etc.
  
 <!-- Write your answer below this line -->
- 
- 
- 
+ I will use the ACS data (via tidycensus) and sf to build a tract-level dataset of older adult population and households without vehicles (I think the variable is B08201). I plan to use isochrones and conduct travel-time analysis (likely using mapboxapi) to estimate travel times to the nearest facility by car and by TheBus.
  
  
 ---
