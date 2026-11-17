@@ -9,6 +9,7 @@ editor: visual
 This lab is meant to utilize your GIS skills for an entrepreneurial endeavor; where to open your first coffee shop. You will go through each step of the lab building a case for why your chosen location is one worth investing in. Your assignment is to create a new qmd called coffee_shop.qmd, run all the analyses outlined in this document, and render the qmd into a .html that is pushed to github for final submission on canvas. This is **due November 17th at 11:30 AM**.
 
 ### Libraries
+
 ```{r}
 library(osmdata)
 library(sf)
@@ -27,7 +28,7 @@ library(here)
 Every good business needs a name and nice logo, create one manually or with AI for your new cafe and save it as a .png that will show up in your rendered .qmd .html file. (***2 points***)
 
 **Name:** Kape Co., Kape Mo (Tagalog: My Coffee, Your Coffee)\
-![Kape Co., Kape Mo Logo](images/Kape-Co-Kape-Mo.png){width="270"}
+![Kape Co., Kape Mo Logo](images/Kape-Co-Kape-Mo.png){width="315"}
 
 ### Step 2 - Finding a location
 
@@ -67,6 +68,7 @@ waikiki_bb <- c(
 #   add_osm_features(features = list("amenity" = "cafe","shop" = "coffee"))
 # 
 # osm_raw <- osmdata_sf(cafe_query)
+# Note: It took me several tries to pull the data as I'd get the 'HTTP 504 Gateway Timeout.' error. I think it might be because the query would take too long to process?
 
 cafe_points <- as.data.frame((osm_raw$osm_points))
 ```
@@ -85,7 +87,7 @@ mapview(cafe_points_sf, col.regions = "blue", layer.name = "Existing Coffee Shop
   mapview(waikiki_location_sf, col.regions = "red", layer.name = "Kape Co., Kape Mo")
 ```
 
-There are 47 other cafes and coffee shops within the vicinity of my coffee shop, which I expected since it is located in Waikiki. This means there is tough competition as there are many other options that customers could go to instead. From the list of coffee shops and cafes, it doesn't appear there are any that are rooted in Filipino culture, so I could use that as a selling point. Along with coffee, Kape Co., Kape Mo would offer Filipino pastries, such as Mamon and Ube Macapuno Buns & Rolls. 
+**Interpretation:** There are 47 other cafes and coffee shops within the vicinity of my coffee shop, which I expected since it is located in Waikiki. This means there is tough competition as there are many other options that customers could go to instead. From the list of coffee shops and cafes, it doesn't appear there are any that are rooted in Filipino culture, so I could use that as a selling point. Along with coffee, Kape Co., Kape Mo would offer Filipino pastries, such as Mamon and Ube Macapuno Buns & Rolls.
 
 ### Step 4.1 - Resident Customer Demographics
 
@@ -143,6 +145,15 @@ oahu_walk <- get_acs(
   year = 2022
 )
 
+oahu_bike <- get_acs(
+  geography = "tract",
+  variables = "B08301_018",
+  state = "HI",
+  county = "Honolulu",
+  geometry = TRUE,
+  year = 2022
+)
+
 oahu_commuters <- get_acs(
   geography = "tract",
   variables = "B08301_001",
@@ -161,6 +172,9 @@ waikiki_bbox_sf <- st_as_sfc(
 oahu_college_ug_w <- st_filter(
   oahu_college_ug, waikiki_bbox_sf)
 
+oahu_bike_w <- st_filter(
+  oahu_bike, waikiki_bbox_sf)
+
 oahu_walk_w <- st_filter(
   oahu_walk, waikiki_bbox_sf)
 
@@ -176,6 +190,11 @@ mapview(waikiki_location_sf, col.regions = "red") +
 ```{r}
 mapview(waikiki_location_sf, col.regions = "red") +
   mapview(oahu_walk_w, zcol = "estimate")
+```
+
+```{r}
+mapview(waikiki_location_sf, col.regions = "red") +
+  mapview(oahu_bike_w, zcol = "estimate")
 ```
 
 ```{r}
@@ -222,6 +241,8 @@ waikiki_workers_plot <- ggplot(waikiki_jobs) +
 ggplotly(waikiki_workers_plot)
 ```
 
+**Interpretation:** The majority of the workers in that specific location in Waikiki are from Oahu, specifically on the East side (East Honolulu, Hawaii Kai). There also appears to be a decent amount who are from Maui and Kauai.
+
 ```{r}
 waikiki_od <- hi_od |>
   st_filter(dest_pt) |>
@@ -243,6 +264,7 @@ waikiki_od |>
   labs(title = "Age of Waikiki workers by home tract", fill = "Share")
 ```
 
+**Interpetation:** It appears that a large amount of Waikiki workers fall in the 30-54 age range across all islands. They seem to make up majority of the workforce. The second would be those who are 29 or younger, most residing on Oahu.
 
 ### Step 5 - What's nearby?
 
@@ -302,7 +324,7 @@ outage_plot <- ggplot(eagle_i_daily, aes(x = date, y = customers_out)) +
 ggplotly(outage_plot)
 ```
 
-It seems that the number of power outages fluctuate a lot during the year. That said, it would be a good idea to have a generator, especially if I am putting my coffee shop in a touristy area like Waikiki. 
+**Interpretation:** It seems that the number of power outages fluctuate a lot during the year. That said, it would be a good idea to have a generator, especially if I am putting my coffee shop in a touristy area like Waikiki.
 
 ### Bonus Points Step - Does your cafe have ML predicted solar?
 
@@ -312,3 +334,4 @@ I know this is a bit of a stretch but I'm having fun combining all of this cours
 
 Write a 7-12 sentence summary on why you think your cafe location is a good choice/worth investing in based on the spatial data you were able to describe in the steps above. (***6 points***)
 
+I think my cafe location at 275 Beach Walk is worth investing in because it sits in the heart of Waikiki, where there is constant foot traffic from tourists. Many of them would probably stumble upon the shop while walking around, which means I would get customers without relying on a lot of marketing. The census data also shows a good amount of workers who walk to work in the tracts around my location, so people could stop by for a coffee or a bite before their shift. The isochrone maps show that the shop is within walking distance of a few hotels, which adds even more potential customers. The LODES data shows that majority of the Waikiki workforce in that specific location mostly reside in East Honolulu and Hawaii Kai, but a good amount also come from Maui and Kauai. The biggest downside is the competition, since there are 47 other cafes and coffee shops nearby. As I mentioned earlier in the qmd file, I think I can use the fact none of the existing shops seem to be rooted in Filipino culture to my advantage. Selling Filipino pastries like Mamon and Ube Macapuno buns alongside coffee would give people a reason to choose Kape Co., Kape Mo over the others. I would also plan for power outages, which fluctuated a lot throughout 2025 in Honolulu County, so a generator would help keep the shop open in a busy tourist area. Overall, the high foot traffic and walkable location outweigh the tough competition, as long as the shop stands out and is prepared for outages.
