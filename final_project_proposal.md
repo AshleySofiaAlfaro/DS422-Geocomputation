@@ -1,8 +1,8 @@
 # DS 422 Geocomputation – Final Project Proposal
  
-**Name:**
+**Name:** Ashley Sofia Alfaro
  
-**Date:**
+**Date:** Nov 17, 2026
  
 ---
  
@@ -17,9 +17,9 @@ Download this file and add it to your DS422 Repository, then edit right in the g
 What do you want to find out? Phrase it as a question. Mention the place and time period if they are relevant.
  
 <!-- Write your answer below this line -->
+**RQ:** How does travel-time access to hospitals and health clinics differ between car and public transport for the elderly population (65+) in Oahu?
  
- 
- 
+From personal observation, I noticed that there are a lot of kupunas who use TheBus, and it made me wonder how easily accessible hospitals and health clinics are for them in the event they don't have their own car or someone to drive them there. It would be interesting to include a vulnerability layer, such as observing disability status and poverty status at a census tract level. 
  
  
 ---
@@ -29,8 +29,9 @@ What do you want to find out? Phrase it as a question. Mention the place and tim
 List each dataset and where it comes from (agency, website, link). Note the format (shapefile, raster, CSV with coordinates, etc.) and the spatial and temporal coverage if you know it.
  
 <!-- Write your answer below this line -->
- 
- 
+- [HonoluluGIS](https://honolulu-cchnl.opendata.arcgis.com/datasets/hospitals-and-clinics/explore?location=21.474750,-157.942850,10): Locations of hospitals and clinics. This could be downloaded as a GeoJSON file.
+- [HonoluluGIS](https://honolulu-cchnl.opendata.arcgis.com/datasets/bus-routes/explore?location=21.381248%2C-157.925971%2C11): Bus Routes for the City and County of Honolulu
+- American Community Survey Data (can be accessed via tidycensus)
  
  
  
